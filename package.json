@@ -1,0 +1,20 @@
+{
+  "name": "vercel-clone",
+  "version": "1.0.0",
+  "description": "منصة نشر مشاريع Node.js مع ربط GitHub وكشف ذكي للمشروع وقاعدة البيانات",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "node-fetch": "^2.7.0"
+  }
+}

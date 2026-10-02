@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deployly — Authentication</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+.auth-bg{position:fixed;inset:0;z-index:0;overflow:hidden}
+.auth-bg::before{content:'';position:absolute;width:700px;height:700px;border-radius:50%;background:radial-gradient(circle,rgba(59,130,246,.18),transparent 70%);top:-200px;right:-200px}
+.auth-bg::after{content:'';position:absolute;width:500px;height:500px;border-radius:50%;background:radial-gradient(circle,rgba(139,92,246,.14),transparent 70%);bottom:-100px;left:-100px}
+.auth-wrap{position:relative;z-index:1;min-height:100vh;display:grid;place-items:center;padding:24px}
+.auth-card{background:rgba(17,24,39,0.85);backdrop-filter:blur(24px);border:1px solid rgba(255,255,255,.08);border-radius:28px;padding:40px;width:100%;max-width:440px;box-shadow:0 32px 80px rgba(0,0,0,.5)}
+.auth-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.auth-logo{display:flex;align-items:center;gap:10px;font-size:1.4rem;font-weight:900;letter-spacing:-.04em;background:linear-gradient(to right,#60a5fa,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.auth-logo i{width:0;height:0;border-inline:10px solid transparent;border-bottom:18px solid #60a5fa;display:block;flex-shrink:0}
+.auth-card h1{font-size:1.75rem;font-weight:800;letter-spacing:-.04em;margin-bottom:6px}
+.auth-card .sub{color:var(--mu);font-size:.95rem;margin-bottom:24px}
+.sw{margin-top:24px;font-size:.88rem;color:var(--mu);text-align:center}
+.sw a{color:#60a5fa;border-bottom:1px solid rgba(96,165,250,.3);transition:.2s}
+.sw a:hover{border-color:#60a5fa}
+</style>
+</head>
+<body style="background:var(--bg)">
+<div class="auth-bg"></div>
+<div class="auth-wrap">
+<form class="auth-card" id="f">
+  <div class="auth-header">
+    <a class="auth-logo" href="/"><i></i>Deployly</a>
+    <div id="auth-lang-btn"></div>
+  </div>
+  <h1 id="h">Welcome Back</h1>
+  <p class="sub" id="s">Sign in to manage and monitor your deployments.</p>
+  <div id="nm" hidden>
+    <label for="name" id="lbl-name">Full Name</label>
+    <input id="name" autocomplete="name" placeholder="John Doe">
+  </div>
+  <label for="email" id="lbl-email">Email Address</label>
+  <input id="email" type="email" required autocomplete="email" dir="ltr" placeholder="you@example.com">
+  <label for="pw" id="lbl-pw">Password</label>
+  <input id="pw" type="password" required minlength="6" autocomplete="current-password" dir="ltr" placeholder="••••••••">
+  <div class="err" id="err" role="alert"></div>
+  <button class="btn pri" style="width:100%;margin-top:16px;height:48px;font-size:1rem;border-radius:12px" id="b">Sign In</button>
+  <p class="sw" id="sw"></p>
+</form>
+</div>
+<script src="js/i18n.js"></script>
+<script src="js/app.js"></script>
+<script src="js/auth.js"></script>
+</body>
+</html>

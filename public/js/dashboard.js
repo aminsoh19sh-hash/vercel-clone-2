@@ -1,0 +1,840 @@
+if (!API.token()) location.href = 'login.html';
+
+const view = document.getElementById('view');
+const modal = document.getElementById('modal');
+const langWrap = document.getElementById('lang-switch-wrap');
+
+let me = null;
+let timer = null;
+let currentView = 'list'; // 'list' | 'creator' | 'detail'
+let currentProjectId = null;
+let currentDetailTab = 'logs';
+
+// Status badge helper
+const ST_KEYS = {
+  idle: 'stIdle',
+  building: 'stBuilding',
+  running: 'stRunning',
+  stopped: 'stStopped',
+  failed: 'stFailed'
+};
+const badge = s => `<span class="badge ${s}">${I18N.t(ST_KEYS[s] || s, s)}</span>`;
+
+// Setup top navbar buttons
+document.getElementById('out').onclick = () => {
+  localStorage.removeItem('token');
+  location.href = 'login.html';
+};
+
+if (langWrap) {
+  langWrap.innerHTML = I18N.createSwitcherHtml();
+}
+
+window.addEventListener('languageChanged', () => {
+  document.getElementById('out').textContent = I18N.t('navLogout');
+  if (langWrap) langWrap.innerHTML = I18N.createSwitcherHtml();
+  if (currentView === 'creator') {
+    renderCreator();
+  } else if (currentView === 'detail' && currentProjectId) {
+    detail(currentProjectId, currentDetailTab);
+  } else {
+    list();
+  }
+});
+
+async function init() {
+  try {
+    me = await API.get('/api/auth/me');
+    document.getElementById('who').textContent = me.name || me.email;
+    const av = document.getElementById('av');
+    if (av) av.textContent = (me.name || me.email || '?')[0].toUpperCase();
+    
+    const g = new URLSearchParams(location.search).get('github');
+    if (g) {
+      toast(g === 'connected' ? '✅ GitHub connected successfully' : '❌ GitHub connection failed: ' + (new URLSearchParams(location.search).get('msg') || ''), g === 'connected' ? 2600 : 9000);
+      history.replaceState(null, '', 'dashboard.html');
+    }
+    
+    // Check if URL has #new
+    if (location.hash === '#new') {
+      renderCreator();
+    } else {
+      list();
+    }
+  } catch (err) {
+    console.error('Init error:', err);
+  }
+}
+
+// ========================================================
+// 1. Projects List & Dashboard Overview
+// ========================================================
+async function list() {
+  clearInterval(timer);
+  currentView = 'list';
+  currentProjectId = null;
+  history.replaceState(null, '', 'dashboard.html');
+
+  const [ps, stats] = await Promise.all([
+    API.get('/api/projects').catch(() => []),
+    API.get('/api/stats').catch(() => ({ projects: 0, deployments: 0, ram: '—', uptime: '—' }))
+  ]);
+
+  const statItems = [
+    { icon: '🚀', label: I18N.t('statProjects'), value: stats.projects, accent: '#3b82f6' },
+    { icon: '📦', label: I18N.t('statDeployments'), value: stats.deployments, accent: '#8b5cf6' },
+    { icon: '💾', label: I18N.t('statRam'), value: stats.ram, accent: '#10b981', mono: true },
+    { icon: '⏱️', label: I18N.t('statUptime'), value: stats.uptime, accent: '#f59e0b', mono: true },
+  ];
+
+  const statsHtml = `
+    <div style="background:linear-gradient(135deg,rgba(59,130,246,.08),rgba(139,92,246,.06));border:1px solid rgba(255,255,255,.06);border-radius:24px;padding:28px 32px;margin-bottom:32px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
+      <div>
+        <p style="color:var(--mu);font-size:.88rem;margin-bottom:4px">${I18N.t('welcomeTo')}</p>
+        <h2 style="font-size:1.8rem;font-weight:900;letter-spacing:-.04em;background:linear-gradient(to right,#60a5fa,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent">${I18N.t('dashTitle')}</h2>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${me?.github
+          ? `<span style="display:flex;align-items:center;gap:6px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25);border-radius:99px;padding:6px 14px;font-size:.82rem;color:#10b981">${I18N.t('ghConnected')}${esc(me.ghLogin || '')}</span>`
+          : `<button class="btn sm" id="gh-connect">${I18N.t('ghConnectBtn')}</button>`}
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:16px;margin-bottom:40px">
+      ${statItems.map(s => `
+        <div style="background:linear-gradient(145deg,var(--s1),var(--bg));border:1px solid rgba(255,255,255,.06);border-radius:20px;padding:24px;position:relative;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,.2)">
+          <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${s.accent}"></div>
+          <div style="font-size:1.6rem;margin-bottom:12px">${s.icon}</div>
+          <div style="font-size:${s.mono ? '1.2rem' : '2.2rem'};font-weight:900;letter-spacing:-.03em;color:${s.accent};${s.mono ? "font-family:'JetBrains Mono',monospace" : ''}">${esc(String(s.value))}</div>
+          <div style="color:var(--mu);font-size:.82rem;margin-top:4px">${s.label}</div>
+        </div>`).join('')}
+    </div>`;
+
+  const activeCount = ps.filter(p => p.status === 'running').length;
+  
+  view.innerHTML = statsHtml + `
+    <div class="head">
+      <div>
+        <h1 style="font-size:1.5rem;font-weight:800">${I18N.t('projectsTitle')} <span style="color:var(--mu);font-size:1rem;font-weight:400">(${ps.length})</span></h1>
+        ${activeCount ? `<p style="color:var(--ok);font-size:.84rem;margin-top:2px">● ${activeCount} ${I18N.t('projectsRunning')}</p>` : ''}
+      </div>
+      <button class="btn pri" id="new-btn" style="border-radius:12px;gap:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        ${I18N.t('newProjectBtn')}
+      </button>
+    </div>` + (ps.length
+    ? `<div class="grid">${ps.map(p => {
+        const displayUrl = p.customDomain ? p.previewUrl : p.url;
+        const linkHref = p.url || p.previewUrl || '#';
+        const isRunning = p.status === 'running';
+        const locale = I18N.current === 'ar' ? 'ar-EG' : 'en-US';
+        return `
+          <div class="proj" data-id="${p.id}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:12px">
+              <div>
+                <h3 style="font-size:1.15rem;font-weight:700;margin-bottom:4px">${esc(p.name)}</h3>
+                <span style="color:var(--mu);font-size:.78rem;direction:ltr;display:block">${esc((p.repoUrl || '').replace('https://github.com/',''))}</span>
+              </div>
+              ${badge(p.status)}
+            </div>
+            <div class="chips">
+              ${p.framework ? `<span class="chip ai">${esc(p.framework)}</span>` : ''}
+              ${(p.dbs || []).map(d => `<span class="chip db">${esc(d.name)}</span>`).join('')}
+              ${p.customDomain ? `<span class="chip mono" style="color:#60a5fa;border-color:rgba(59,130,246,.3)">🔗 ${esc(p.customDomain)}</span>` : ''}
+            </div>
+            <div class="meta">
+              <span>🌐 ${displayUrl ? `<a href="${esc(linkHref)}" target="_blank" onclick="event.stopPropagation()" style="color:${isRunning ? 'var(--ok)' : 'var(--ac)'}">${esc(displayUrl.replace(/^https?:\/\//,''))} ${isRunning ? '●' : ''}</a>` : `<span style="color:var(--mu)">${I18N.t('notDeployedYet')}</span>`}</span>
+              <span>🌿 ${esc(p.branch)}</span>
+              <span>🕒 ${p.lastDeployAt ? `${I18N.t('lastDeployed')} ${new Date(p.lastDeployAt).toLocaleString(locale)}` : I18N.t('neverDeployed')}</span>
+            </div>
+          </div>
+        `;
+      }).join('')}</div>`
+    : `<div class="empty">
+        <div style="font-size:3.2rem;margin-bottom:16px">🚀</div>
+        <h2>${I18N.t('noProjectsTitle')}</h2>
+        <p>${I18N.t('noProjectsDesc')}</p>
+        <br><button class="btn pri" id="new-btn2" style="border-radius:12px;height:44px;padding:0 24px">${I18N.t('importFirstBtn')}</button>
+      </div>`);
+
+  document.getElementById('new-btn')?.addEventListener('click', renderCreator);
+  document.getElementById('new-btn2')?.addEventListener('click', renderCreator);
+  document.getElementById('gh-connect')?.addEventListener('click', async () => {
+    try {
+      location.href = (await API.get('/api/github/login-url')).url;
+    } catch(x) {
+      toast('❌ ' + x.message, 5000);
+    }
+  });
+
+  view.querySelectorAll('.proj').forEach(c => c.onclick = () => detail(c.dataset.id));
+}
+
+// ========================================================
+// 2. Creative Single-Page Project Creator (No Modals)
+// ========================================================
+function renderCreator(prefill = {}) {
+  clearInterval(timer);
+  currentView = 'creator';
+  currentProjectId = null;
+  history.replaceState(null, '', 'dashboard.html#new');
+
+  let activeSourceTab = 'github'; // 'github' | 'giturl'
+  let detectedData = null;
+  let cachedRepos = [];
+
+  const html = `
+    <div class="creator-container">
+      <div class="creator-breadcrumb">
+        <a href="#" id="cr-back">${I18N.t('creatorBreadcrumb')}</a>
+        <span class="sep">/</span>
+        <span style="color:var(--tx);font-weight:600">${I18N.t('creatorBreadcrumbCurrent')}</span>
+      </div>
+
+      <div class="creator-header">
+        <h1>${I18N.t('creatorTitle')}</h1>
+        <p>${I18N.t('creatorSubtitle')}</p>
+      </div>
+
+      <!-- CARD 1: Git Source -->
+      <div class="creator-card">
+        <div class="card-head">
+          <div class="step-num">1</div>
+          <div>
+            <h2>${I18N.t('sourceTabGithub')} & Git Source</h2>
+            <p>${I18N.t('ghNoticeTitle')}</p>
+          </div>
+        </div>
+
+        <div class="source-nav">
+          <button type="button" class="active" id="tab-gh-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            ${I18N.t('sourceTabGithub')}
+          </button>
+          <button type="button" id="tab-url-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            ${I18N.t('sourceTabGitUrl')}
+          </button>
+        </div>
+
+        <!-- GitHub Panel -->
+        <div id="gh-panel">
+          ${me?.github ? `
+            <div class="repo-search-box">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <input id="gh-search" placeholder="${I18N.t('searchReposPlaceholder')}" dir="ltr">
+            </div>
+            <div class="repo-picker-list" id="gh-repo-list">
+              <div style="padding:20px;text-align:center;color:var(--mu)">${I18N.t('loadingRepos')}</div>
+            </div>
+          ` : `
+            <div class="tip" style="margin-top:0">${I18N.t('ghNoticeTitle')}</div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:16px 0">
+              <button class="btn pri" id="gh-oauth-btn">${I18N.t('ghOAuthBtn')}</button>
+            </div>
+            <label>${I18N.t('ghPatLabel')}</label>
+            <div class="row">
+              <input id="gh-pat-input" type="password" dir="ltr" placeholder="${I18N.t('ghPatPlaceholder')}">
+              <button class="btn" id="gh-pat-save-btn">${I18N.t('ghPatSave')}</button>
+            </div>
+          `}
+        </div>
+
+        <!-- Direct Git URL Panel -->
+        <div id="url-panel" style="display:none">
+          <label>${I18N.t('gitUrlLabel')}</label>
+          <div class="row">
+            <input id="git-url-input" dir="ltr" placeholder="${I18N.t('gitUrlPlaceholder')}" value="${esc(prefill.repoUrl || '')}">
+            <button class="btn pri sm" id="git-analyze-btn" style="height:44px;padding:0 20px;white-space:nowrap">${I18N.t('btnAnalyzeRepo')}</button>
+          </div>
+          <div style="margin-top:12px">
+            <label>${I18N.t('gitBranchLabel')}</label>
+            <input id="git-branch-input" dir="ltr" value="${esc(prefill.branch || 'main')}" style="max-width:240px">
+          </div>
+        </div>
+
+        <div class="err" id="source-err"></div>
+      </div>
+
+      <!-- CARD 2: Smart Detection & Insights -->
+      <div class="detection-card" id="detection-box">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="font-size:1.4rem">🧠</span>
+          <h3 style="font-size:1.1rem;font-weight:700">${I18N.t('insightsTitle')}</h3>
+        </div>
+        <div class="detection-badge-row" id="detection-chips"></div>
+        <div id="detection-notes" style="margin-top:12px"></div>
+      </div>
+
+      <!-- CARD 3: Project Configuration & Custom Domain -->
+      <div class="creator-card">
+        <div class="card-head">
+          <div class="step-num">2</div>
+          <div>
+            <h2>${I18N.t('configSectionTitle')}</h2>
+            <p>Configure project naming, branch, and your custom access link.</p>
+          </div>
+        </div>
+
+        <div class="two">
+          <div>
+            <label>${I18N.t('projNameLabel')}</label>
+            <input id="p-name" dir="ltr" placeholder="my-awesome-app" value="${esc(prefill.name || '')}">
+          </div>
+          <div>
+            <label>${I18N.t('projBranchLabel')}</label>
+            <input id="p-branch" dir="ltr" value="${esc(prefill.branch || 'main')}">
+          </div>
+        </div>
+
+        <div>
+          <label>${I18N.t('projRootDirLabel')}</label>
+          <input id="p-root" dir="ltr" placeholder="." value="${esc(prefill.rootDir || '')}">
+        </div>
+
+        <!-- CUSTOM DOMAIN / PROJECT LINK FEATURE -->
+        <div class="custom-domain-wrapper">
+          <div class="custom-domain-header">
+            <label style="margin:0;font-weight:700;color:#93c5fd;display:flex;align-items:center;gap:8px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              ${I18N.t('settingsCustomUrl')}
+            </label>
+            <span class="custom-domain-preview" id="domain-preview">http://localhost:400x</span>
+          </div>
+          <p style="font-size:.82rem;color:var(--mu);margin-bottom:10px">${I18N.t('settingsCustomUrlHint')}</p>
+          <input id="p-custom-domain" dir="ltr" placeholder="${I18N.t('settingsCustomUrlPlaceholder')}" value="${esc(prefill.customDomain || '')}">
+        </div>
+      </div>
+
+      <!-- CARD 4: Build & Output Settings -->
+      <div class="creator-card">
+        <div class="card-head">
+          <div class="step-num">3</div>
+          <div>
+            <h2>${I18N.t('buildSectionTitle')}</h2>
+            <p>Define build commands or use auto-detected settings.</p>
+          </div>
+        </div>
+
+        <label>${I18N.t('settingsInstallCmd')}</label>
+        <input id="p-install" list="ilist" dir="ltr" value="${esc(prefill.installCmd || 'npm install')}">
+        <datalist id="ilist">
+          <option>npm install</option>
+          <option>npm ci</option>
+          <option>yarn install</option>
+          <option>pnpm install</option>
+          <option>pip install -r requirements.txt</option>
+        </datalist>
+
+        <label>${I18N.t('settingsBuildCmd')}</label>
+        <input id="p-build" dir="ltr" placeholder="npm run build" value="${esc(prefill.buildCmd || '')}">
+
+        <label>${I18N.t('settingsStartCmd')}</label>
+        <input id="p-start" list="slist" dir="ltr" value="${esc(prefill.startCmd || 'npm start')}">
+        <datalist id="slist">
+          <option>npm start</option>
+          <option>npm run dev</option>
+          <option>node server.js</option>
+          <option>node index.js</option>
+          <option>npx serve -s build -l $PORT</option>
+          <option>npx vite preview --host 0.0.0.0 --port $PORT</option>
+          <option>python app.py</option>
+        </datalist>
+      </div>
+
+      <!-- CARD 5: Environment Variables -->
+      <div class="creator-card">
+        <div class="card-head">
+          <div class="step-num">4</div>
+          <div>
+            <h2>${I18N.t('envSectionTitle')}</h2>
+            <p>${I18N.t('envHelper')}</p>
+          </div>
+        </div>
+
+        <label>${I18N.t('settingsEnv')}</label>
+        <textarea id="p-env" dir="ltr" class="mono" placeholder="DATABASE_URL=mongodb://...&#10;API_KEY=secret" style="min-height:130px">${esc(prefill.env || '')}</textarea>
+      </div>
+
+      <!-- STICKY ACTION DEPLOY BAR -->
+      <div class="deploy-action-bar">
+        <button type="button" class="btn" id="cr-cancel-btn">${I18N.t('btnCancel')}</button>
+        <div style="display:flex;align-items:center;gap:12px">
+          <span class="err" id="deploy-err" style="margin:0"></span>
+          <button type="button" class="btn pri deploy-btn-large" id="cr-deploy-btn">
+            ${I18N.t('btnLaunchDeploy')}
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  view.innerHTML = html;
+
+  // Wire back & cancel buttons
+  document.getElementById('cr-back').onclick = e => { e.preventDefault(); list(); };
+  document.getElementById('cr-cancel-btn').onclick = () => list();
+
+  // Tab switching
+  const tabGhBtn = document.getElementById('tab-gh-btn');
+  const tabUrlBtn = document.getElementById('tab-url-btn');
+  const ghPanel = document.getElementById('gh-panel');
+  const urlPanel = document.getElementById('url-panel');
+
+  tabGhBtn.onclick = () => {
+    activeSourceTab = 'github';
+    tabGhBtn.classList.add('active');
+    tabUrlBtn.classList.remove('active');
+    ghPanel.style.display = 'block';
+    urlPanel.style.display = 'none';
+  };
+  tabUrlBtn.onclick = () => {
+    activeSourceTab = 'giturl';
+    tabUrlBtn.classList.add('active');
+    tabGhBtn.classList.remove('active');
+    ghPanel.style.display = 'none';
+    urlPanel.style.display = 'block';
+  };
+
+  // Custom domain preview live update
+  const customDomainInput = document.getElementById('p-custom-domain');
+  const domainPreview = document.getElementById('domain-preview');
+  const updateDomainPreview = () => {
+    const val = customDomainInput.value.trim();
+    if (val) {
+      const formatted = val.startsWith('http://') || val.startsWith('https://') ? val : `http://${val}`;
+      domainPreview.textContent = formatted;
+      domainPreview.style.color = '#60a5fa';
+    } else {
+      domainPreview.textContent = 'http://localhost:400x';
+      domainPreview.style.color = 'var(--mu)';
+    }
+  };
+  customDomainInput.oninput = updateDomainPreview;
+  updateDomainPreview();
+
+  // Load GitHub repos if authenticated
+  if (me?.github) {
+    const ghSearch = document.getElementById('gh-search');
+    const repoList = document.getElementById('gh-repo-list');
+
+    const renderRepoItems = (filter = '') => {
+      const q = filter.trim().toLowerCase();
+      const filtered = cachedRepos.filter(r => r.full.toLowerCase().includes(q));
+      if (!filtered.length) {
+        repoList.innerHTML = `<div style="padding:24px;text-align:center;color:var(--mu)">${I18N.t('noReposFound')}</div>`;
+        return;
+      }
+      repoList.innerHTML = filtered.slice(0, 40).map(r => `
+        <div class="repo-picker-item" data-url="${esc(r.url)}" data-branch="${esc(r.branch)}" data-name="${esc(r.name)}">
+          <div class="name">
+            <span>${esc(r.full)}</span>
+            ${r.private ? '<span style="font-size:.72rem;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px">🔒 Private</span>' : ''}
+          </div>
+          <div class="meta">
+            ${r.lang ? `<span style="color:#60a5fa">${esc(r.lang)}</span>` : ''}
+            <span class="btn sm pri" style="height:28px;padding:0 10px;font-size:.75rem">${I18N.t('selectRepoBtn')}</span>
+          </div>
+        </div>
+      `).join('');
+
+      repoList.querySelectorAll('.repo-picker-item').forEach(item => {
+        item.onclick = () => {
+          repoList.querySelectorAll('.repo-picker-item').forEach(el => el.classList.remove('selected'));
+          item.classList.add('selected');
+          
+          const url = item.dataset.url;
+          const branch = item.dataset.branch || 'main';
+          const name = item.dataset.name;
+
+          document.getElementById('p-name').value = name;
+          document.getElementById('p-branch').value = branch;
+          runDetection(url, branch);
+        };
+      });
+    };
+
+    API.get('/api/github/repos')
+      .then(repos => {
+        cachedRepos = repos;
+        renderRepoItems();
+      })
+      .catch(err => {
+        repoList.innerHTML = `<div style="padding:20px;color:var(--er)">${esc(err.message)}</div>`;
+      });
+
+    ghSearch.oninput = e => renderRepoItems(e.target.value);
+  } else {
+    // GitHub not connected actions
+    document.getElementById('gh-oauth-btn')?.addEventListener('click', async () => {
+      try {
+        location.href = (await API.get('/api/github/login-url')).url;
+      } catch (err) {
+        document.getElementById('source-err').textContent = err.message;
+      }
+    });
+
+    document.getElementById('gh-pat-save-btn')?.addEventListener('click', async () => {
+      const pat = document.getElementById('gh-pat-input').value.trim();
+      if (!pat) return;
+      try {
+        me = await API.post('/api/github/token', { token: pat });
+        toast(I18N.t('ghConnected') + (me.ghLogin || ''));
+        renderCreator();
+      } catch (err) {
+        document.getElementById('source-err').textContent = err.message;
+      }
+    });
+  }
+
+  // Direct Git URL Analyze Button
+  document.getElementById('git-analyze-btn').onclick = () => {
+    const url = document.getElementById('git-url-input').value.trim();
+    const branch = document.getElementById('git-branch-input').value.trim() || 'main';
+    if (!url) {
+      document.getElementById('source-err').textContent = 'Please enter a valid Git clone URL';
+      return;
+    }
+    const derivedName = url.split('/').pop().replace(/\.git$/, '');
+    if (!document.getElementById('p-name').value) {
+      document.getElementById('p-name').value = derivedName;
+    }
+    document.getElementById('p-branch').value = branch;
+    runDetection(url, branch);
+  };
+
+  // Detection logic
+  async function runDetection(url, branch) {
+    const detBox = document.getElementById('detection-box');
+    const detChips = document.getElementById('detection-chips');
+    const detNotes = document.getElementById('detection-notes');
+    const sourceErr = document.getElementById('source-err');
+
+    sourceErr.textContent = '';
+    detBox.classList.add('visible');
+    detChips.innerHTML = `<div style="color:var(--mu);font-size:.85rem">${I18N.t('analyzingText')}</div>`;
+    detNotes.innerHTML = '';
+
+    try {
+      const d = await API.post('/api/detect', { repoUrl: url, branch, rootDir: document.getElementById('p-root').value.trim() });
+      detectedData = d;
+
+      // Update chips
+      detChips.innerHTML = `
+        <span class="detection-hero-chip">🚀 ${I18N.t('insightsFramework')}: <strong>${esc(d.framework)}</strong></span>
+        ${(d.dbs || []).map(x => `<span class="chip db" style="font-size:.82rem;padding:4px 12px">🗄️ ${I18N.t('insightsDb')}: ${esc(x.name)}</span>`).join('')}
+      `;
+
+      // Update notes
+      let notesHtml = '';
+      if (d.dbs && d.dbs.length) {
+        notesHtml += `<div class="tip" style="margin:8px 0">${I18N.t('insightsDbTip')} (${d.dbs.map(x => esc(x.name)).join(', ')})</div>`;
+      }
+      (d.notes || []).forEach(n => {
+        notesHtml += `<div class="tip" style="margin:8px 0">${esc(n)}</div>`;
+      });
+      detNotes.innerHTML = notesHtml;
+
+      // Pre-fill form fields
+      if (d.installCmd) document.getElementById('p-install').value = d.installCmd;
+      if (d.buildCmd) document.getElementById('p-build').value = d.buildCmd;
+      if (d.startCmd) document.getElementById('p-start').value = d.startCmd;
+
+      // Merge environment variables
+      if (d.envKeys && d.envKeys.length) {
+        const curEnv = document.getElementById('p-env').value;
+        const newKeys = d.envKeys.map(k => `${k}=`).join('\n');
+        document.getElementById('p-env').value = curEnv ? `${curEnv}\n${newKeys}` : newKeys;
+      }
+    } catch (err) {
+      detBox.classList.remove('visible');
+      sourceErr.textContent = err.message;
+    }
+  }
+
+  // Deploy Action
+  const deployBtn = document.getElementById('cr-deploy-btn');
+  const deployErr = document.getElementById('deploy-err');
+
+  deployBtn.onclick = async () => {
+    let repoUrl = '';
+    if (activeSourceTab === 'github') {
+      const sel = ghPanel.querySelector('.repo-picker-item.selected');
+      if (sel) {
+        repoUrl = sel.dataset.url;
+      } else {
+        deployErr.textContent = 'Please select a repository from the list or switch to Git Clone URL.';
+        return;
+      }
+    } else {
+      repoUrl = document.getElementById('git-url-input').value.trim();
+      if (!repoUrl) {
+        deployErr.textContent = 'Please provide a Git repository clone URL.';
+        return;
+      }
+    }
+
+    const payload = {
+      repoUrl,
+      name: document.getElementById('p-name').value.trim(),
+      branch: document.getElementById('p-branch').value.trim() || 'main',
+      rootDir: document.getElementById('p-root').value.trim(),
+      customDomain: document.getElementById('p-custom-domain').value.trim(),
+      installCmd: document.getElementById('p-install').value.trim(),
+      buildCmd: document.getElementById('p-build').value.trim(),
+      startCmd: document.getElementById('p-start').value.trim(),
+      env: document.getElementById('p-env').value,
+      framework: detectedData?.framework || 'Node.js',
+      dbs: detectedData?.dbs || []
+    };
+
+    deployBtn.disabled = true;
+    deployBtn.innerHTML = `<span>⏳ ${I18N.t('deployingNotice')}</span>`;
+    deployErr.textContent = '';
+
+    try {
+      const p = await API.post('/api/projects', payload);
+      toast(I18N.t('deployStarted'));
+      detail(p.id, 'logs');
+    } catch (err) {
+      deployErr.textContent = err.message;
+      deployBtn.disabled = false;
+      deployBtn.innerHTML = I18N.t('btnLaunchDeploy');
+    }
+  };
+}
+
+// ========================================================
+// 3. Project Detail & Settings Tab (with Custom Domain)
+// ========================================================
+async function detail(id, tab = 'logs') {
+  clearInterval(timer);
+  currentView = 'detail';
+  currentProjectId = id;
+  currentDetailTab = tab;
+  history.replaceState(null, '', `dashboard.html#project=${id}`);
+
+  let p;
+  try {
+    p = await API.get('/api/projects/' + id);
+  } catch (err) {
+    toast('❌ ' + err.message);
+    list();
+    return;
+  }
+
+  const activeUrl = p.customDomain ? p.previewUrl : p.url;
+  const linkHref = p.url || p.previewUrl || '#';
+
+  view.innerHTML = `
+    <a href="#" id="bk" class="m">${I18N.t('backToProjects')}</a>
+    <div class="head" style="margin-top:12px">
+      <div>
+        <h1 style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          ${esc(p.name)} <span id="bd">${badge(p.status)}</span>
+        </h1>
+        <div class="m mono" id="ul" style="font-size:.85rem;margin-top:4px">
+          ${activeUrl ? `<a href="${esc(linkHref)}" target="_blank" rel="noopener" style="color:var(--ac)">${esc(activeUrl)} ↗</a>` : esc(p.repoUrl)}
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn pri sm" id="dp">${I18N.t('btnDeploy')}</button>
+        <button class="btn sm" id="sp">${I18N.t('btnStop')}</button>
+        <button class="btn dan sm" id="dl">${I18N.t('btnDelete')}</button>
+      </div>
+    </div>
+    
+    <div class="chips">
+      ${p.framework ? `<span class="chip ai">${esc(p.framework)}</span>` : ''}
+      ${(p.dbs || []).map(d => `<span class="chip db">${esc(d.name)}</span>`).join('')}
+      <span class="chip mono">PORT ${p.port}</span>
+      ${p.customDomain ? `<span class="chip mono" style="color:#60a5fa;border-color:rgba(59,130,246,.3)">🔗 ${esc(p.customDomain)}</span>` : ''}
+    </div>
+
+    <div class="tabs">
+      <button data-t="logs">${I18N.t('tabLogs')}</button>
+      <button data-t="files">${I18N.t('tabFiles')}</button>
+      <button data-t="settings">${I18N.t('tabSettings')}</button>
+      <button data-t="deps">${I18N.t('tabDeployments')}</button>
+    </div>
+
+    <div id="tb"></div>
+  `;
+
+  document.getElementById('bk').onclick = e => { e.preventDefault(); list(); };
+  document.getElementById('dp').onclick = async () => {
+    await API.post(`/api/projects/${id}/deploy`);
+    toast(I18N.t('deployStarted'));
+    detail(id, 'logs');
+  };
+  document.getElementById('sp').onclick = async () => {
+    await API.post(`/api/projects/${id}/stop`);
+    toast(I18N.t('projectStopped'));
+    detail(id, tab);
+  };
+  document.getElementById('dl').onclick = async () => {
+    if (confirm(I18N.t('confirmDeleteProject'))) {
+      await API.del('/api/projects/' + id);
+      toast(I18N.t('deletedSuccess'));
+      list();
+    }
+  };
+
+  view.querySelectorAll('.tabs button').forEach(b => {
+    b.classList.toggle('on', b.dataset.t === tab);
+    b.onclick = () => detail(id, b.dataset.t);
+  });
+
+  const tb = document.getElementById('tb');
+
+  // Logs Tab
+  if (tab === 'logs') {
+    tb.innerHTML = '<div class="logs term" id="lg"></div>';
+    const lg = document.getElementById('lg');
+    let since = 0;
+    const pull = async () => {
+      try {
+        const r = await API.get(`/api/projects/${id}/logs?since=${since}`);
+        since = r.next;
+        if (r.lines.length) {
+          const stick = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 30;
+          lg.insertAdjacentHTML('beforeend', r.lines.map(l => `<div class="${/^✔/.test(l) ? 'g' : /^✖|error/i.test(l) ? 'e' : /^\$/.test(l) ? 'a' : ''}">${esc(l)}</div>`).join(''));
+          if (stick) lg.scrollTop = lg.scrollHeight;
+        }
+        document.getElementById('bd').innerHTML = badge(r.status);
+        if (r.url || r.previewUrl) {
+          const u = r.url || r.previewUrl;
+          document.getElementById('ul').innerHTML = `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)} ↗</a>`;
+        }
+      } catch {}
+    };
+    pull();
+    timer = setInterval(pull, 1500);
+  }
+
+  // Files Tab
+  else if (tab === 'files') {
+    tb.innerHTML = `<div class="m">${I18N.t('loadingFiles')}</div>`;
+    try {
+      const files = await API.get(`/api/projects/${id}/files`);
+      tb.innerHTML = files.length
+        ? `<div class="term" style="padding:16px;max-height:460px;overflow:auto">` + files.map(f => `<div>📄 ${esc(f)}</div>`).join('') + `</div>`
+        : `<div class="empty">${I18N.t('noFilesFound')}</div>`;
+    } catch {
+      tb.innerHTML = `<div class="err">${I18N.t('failedFiles')}</div>`;
+    }
+  }
+
+  // Settings Tab (With Custom Domain!)
+  else if (tab === 'settings') {
+    tb.innerHTML = `
+      <!-- CUSTOM DOMAIN / LINK TEXT EDIT BOX -->
+      <div class="custom-domain-wrapper" style="margin-bottom:24px">
+        <div class="custom-domain-header">
+          <label style="margin:0;font-weight:700;color:#93c5fd;display:flex;align-items:center;gap:8px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            ${I18N.t('settingsCustomUrl')}
+          </label>
+          <span class="custom-domain-preview" id="set-domain-preview">${esc(p.customDomain || `http://localhost:${p.port}`)}</span>
+        </div>
+        <p style="font-size:.84rem;color:var(--mu);margin-bottom:10px">${I18N.t('settingsCustomUrlHint')}</p>
+        <input id="custom-domain" dir="ltr" value="${esc(p.customDomain || '')}" placeholder="${I18N.t('settingsCustomUrlPlaceholder')}">
+      </div>
+
+      <div class="two">
+        <div>
+          <label>${I18N.t('settingsBranch')}</label>
+          <input id="br" value="${esc(p.branch)}" dir="ltr">
+        </div>
+        <div>
+          <label>${I18N.t('settingsRootDir')}</label>
+          <input id="rd" value="${esc(p.rootDir)}" dir="ltr" placeholder=".">
+        </div>
+      </div>
+
+      <label>${I18N.t('settingsInstallCmd')}</label>
+      <input id="ic" list="il" value="${esc(p.installCmd)}" dir="ltr">
+      <datalist id="il"><option>npm install</option><option>npm ci</option><option>yarn install</option><option>pnpm install</option></datalist>
+
+      <label>${I18N.t('settingsBuildCmd')}</label>
+      <input id="bc" value="${esc(p.buildCmd)}" dir="ltr">
+
+      <label>${I18N.t('settingsStartCmd')}</label>
+      <input id="sc" list="sl" value="${esc(p.startCmd)}" dir="ltr">
+      <datalist id="sl"><option>npm start</option><option>npm run dev</option><option>node server.js</option><option>node index.js</option></datalist>
+
+      <label>${I18N.t('settingsEnv')}</label>
+      <textarea id="env" dir="ltr" class="mono">${esc(p.env)}</textarea>
+
+      <label>${I18N.t('settingsWebhook')}</label>
+      <input readonly dir="ltr" value="${esc(p.webhook)}" onclick="this.select()">
+
+      <div class="row" style="margin-top:24px">
+        <button class="btn pri" id="sv">${I18N.t('btnSave')}</button>
+        <button class="btn" id="sv2">${I18N.t('btnSaveRedeploy')}</button>
+      </div>
+    `;
+
+    // Live preview update for custom domain in settings tab
+    const customInput = document.getElementById('custom-domain');
+    const previewSpan = document.getElementById('set-domain-preview');
+    customInput.oninput = () => {
+      const v = customInput.value.trim();
+      previewSpan.textContent = v ? (v.startsWith('http://') || v.startsWith('https://') ? v : `http://${v}`) : `http://localhost:${p.port}`;
+    };
+
+    const saveSettings = async redeploy => {
+      try {
+        await API.put('/api/projects/' + id, {
+          branch: document.getElementById('br').value.trim(),
+          rootDir: document.getElementById('rd').value.trim(),
+          customDomain: document.getElementById('custom-domain').value.trim(),
+          installCmd: document.getElementById('ic').value.trim(),
+          buildCmd: document.getElementById('bc').value.trim(),
+          startCmd: document.getElementById('sc').value.trim(),
+          env: document.getElementById('env').value
+        });
+        toast(I18N.t('savedSuccess'));
+        if (redeploy) {
+          await API.post(`/api/projects/${id}/deploy`);
+          detail(id, 'logs');
+        } else {
+          detail(id, 'settings');
+        }
+      } catch (err) {
+        toast('❌ ' + err.message);
+      }
+    };
+
+    document.getElementById('sv').onclick = () => saveSettings(false);
+    document.getElementById('sv2').onclick = () => saveSettings(true);
+  }
+
+  // Deployments Tab
+  else {
+    tb.innerHTML = p.deployments.length
+      ? p.deployments.map(d => `
+          <div class="dep">
+            <span class="mono">${esc(d.commit || '—')}</span>
+            <span>${badge(d.status === 'ready' ? 'running' : d.status)}</span>
+            <div class="row">
+              <span class="m">${new Date(d.createdAt).toLocaleString(I18N.current === 'ar' ? 'ar-EG' : 'en-US')}</span>
+              <button class="btn sm dan del-dep" data-id="${d.id}">${I18N.t('btnDelete')}</button>
+            </div>
+          </div>
+        `).join('')
+      : `<div class="empty">${I18N.t('noDepsYet')}</div>`;
+
+    tb.querySelectorAll('.del-dep').forEach(b => {
+      b.onclick = async () => {
+        if (confirm(I18N.t('confirmDeleteDep'))) {
+          await API.del('/api/deployments/' + b.dataset.id);
+          toast(I18N.t('deletedSuccess'));
+          detail(id, 'deps');
+        }
+      };
+    });
+  }
+}
+
+// Start
+init();

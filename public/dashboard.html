@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard — Deployly</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<style>
+nav .logo{background:linear-gradient(to right,#60a5fa,#c084fc);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+nav .logo i{flex-shrink:0}
+.dash-header{display:flex;align-items:center;justify-content:space-between;padding:20px 0;border-bottom:1px solid rgba(255,255,255,.05);margin-bottom:12px}
+.user-chip{display:flex;align-items:center;gap:10px;background:var(--s1);border:1px solid rgba(255,255,255,.08);border-radius:99px;padding:6px 16px 6px 10px;font-size:.88rem}
+.user-chip .avatar{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:800;color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav>
+  <a class="logo" href="/"><i></i>Deployly</a>
+  <div class="row">
+    <div id="lang-switch-wrap"></div>
+    <div class="user-chip">
+      <div class="avatar" id="av">—</div>
+      <span id="who" style="font-size:.85rem;color:var(--mu)"></span>
+    </div>
+    <button class="btn sm dan" id="out">Sign Out</button>
+  </div>
+</nav>
+<main class="dash" id="view"></main>
+</div>
+<div id="modal"></div>
+<script src="js/i18n.js"></script>
+<script src="js/app.js"></script>
+<script src="js/dashboard.js"></script>
+</body>
+</html>
