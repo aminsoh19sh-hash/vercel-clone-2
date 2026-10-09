@@ -166,7 +166,7 @@ function sh(pid, cmd, cwd, env, quiet) {
     c.on('close', r); c.on('error', () => r(1));
   });
 }
-const killTree = c => { try { process.kill(-c.pid); } catch { try { c.kill(); } catch {} } };
+const killTree = c => { try { process.kill(-c.pid); } catch { try { c.kill(); } catch { } } };
 function stop(p) { const c = procs[p.id]; if (c) { delete procs[p.id]; p.status = 'stopped'; killTree(c); } }
 const waitPort = (port, ms = 60000) => new Promise(ok => {
   const t0 = Date.now(), tick = () => { const s = net.connect(port, '127.0.0.1'); s.on('connect', () => { s.destroy(); ok(true); }); s.on('error', () => { s.destroy(); Date.now() - t0 > ms ? ok(false) : setTimeout(tick, 800); }); };
@@ -289,5 +289,10 @@ app.get('/api/stats', auth, (req, res) => {
   });
 });
 
-app.listen(PORT, () => { console.log(`\n  ▲ Deploy platform running → ${BASE}`); console.log(`  GitHub OAuth: ${GH_ID && GH_SECRET ? 'مفعّل' : 'غير مضبوط (استخدم التوكن الشخصي)'}\n`); });
-process.on('SIGINT', () => { Object.values(procs).forEach(killTree); process.exit(); });
+// Vercel يتطلب تصدير التطبيق
+module.exports = app;
+
+if (require.main === module) {
+  app.listen(PORT, () => { console.log(`\n  ▲ Deploy platform running → ${BASE}`); console.log(`  GitHub OAuth: ${GH_ID && GH_SECRET ? 'مفعّل' : 'غير مضبوط (استخدم التوكن الشخصي)'}\n`); });
+  process.on('SIGINT', () => { Object.values(procs).forEach(killTree); process.exit(); });
+}

@@ -13,7 +13,7 @@ function paint() {
   $('s').textContent = reg ? I18N.t('authRegisterSub') : I18N.t('authLoginSub');
   $('b').textContent = reg ? I18N.t('authSignUpBtn') : I18N.t('authSignInBtn');
   $('nm').hidden = !reg;
-  
+
   if ($('lbl-name')) $('lbl-name').textContent = I18N.t('authNameLabel');
   if ($('name')) $('name').placeholder = I18N.t('authNamePlaceholder');
   if ($('lbl-email')) $('lbl-email').textContent = I18N.t('authEmailLabel');
